@@ -16,6 +16,7 @@ function getDragRect(start, end) {
 }
 
 export default function PlateMapStep({
+  parsedData,
   detectedWells,
   conditions,
   setConditions,
@@ -29,9 +30,24 @@ export default function PlateMapStep({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState(null);
   const [dragEnd, setDragEnd] = useState(null);
+  const [hoveredWell, setHoveredWell] = useState(null);
+  const [dragGroupIdx, setDragGroupIdx] = useState(null);
+  const [dragOverIdx, setDragOverIdx] = useState(null);
   const gridRef = useRef(null);
 
   const detectedSet = useMemo(() => new Set(detectedWells), [detectedWells]);
+
+  // Build well absorbance lookup: { wellId: { filename: absorbance } }
+  const wellAbsorbance = useMemo(() => {
+    const map = {};
+    for (const [fname, fileData] of Object.entries(parsedData || {})) {
+      for (const [wid, abs] of Object.entries(fileData)) {
+        if (!map[wid]) map[wid] = {};
+        map[wid][fname] = abs;
+      }
+    }
+    return map;
+  }, [parsedData]);
 
   const wellToCondition = useMemo(() => {
     const map = {};
@@ -165,20 +181,13 @@ export default function PlateMapStep({
       }
     },
     [
-      conditions,
-      setConditions,
-      activeConditionIdx,
-      setActiveConditionIdx,
-      controlConditionIdx,
-      setControlConditionIdx,
-      normRefIdx,
-      setNormRefIdx,
+      conditions, setConditions, activeConditionIdx, setActiveConditionIdx,
+      controlConditionIdx, setControlConditionIdx, normRefIdx, setNormRefIdx,
     ],
   );
 
   const handleNameChange = useCallback(
     (idx, name) => {
-      // Prevent duplicate names by appending a number
       const otherNames = conditions.filter((_, i) => i !== idx).map((c) => c.name);
       let finalName = name;
       if (otherNames.includes(name) && name.trim() !== '') {
@@ -195,9 +204,15 @@ export default function PlateMapStep({
   const handleRowAssign = useCallback(
     (row) => {
       const wells = PLATE_COLS.map((col) => wellId(row, col)).filter((wid) => detectedSet.has(wid));
-      if (wells.length > 0) {
-        assignWellsToActive(wells);
-      }
+      if (wells.length > 0) assignWellsToActive(wells);
+    },
+    [detectedSet, assignWellsToActive],
+  );
+
+  const handleColAssign = useCallback(
+    (col) => {
+      const wells = PLATE_ROWS.map((row) => wellId(row, col)).filter((wid) => detectedSet.has(wid));
+      if (wells.length > 0) assignWellsToActive(wells);
     },
     [detectedSet, assignWellsToActive],
   );
@@ -207,15 +222,83 @@ export default function PlateMapStep({
     setConditions(updated);
   }, [conditions, setConditions]);
 
+  // Drag-to-reorder groups
+  const handleGroupDragStart = useCallback((idx) => {
+    setDragGroupIdx(idx);
+  }, []);
+
+  const handleGroupDragOver = useCallback((e, idx) => {
+    e.preventDefault();
+    setDragOverIdx(idx);
+  }, []);
+
+  const handleGroupDrop = useCallback(
+    (idx) => {
+      if (dragGroupIdx === null || dragGroupIdx === idx) {
+        setDragGroupIdx(null);
+        setDragOverIdx(null);
+        return;
+      }
+
+      const updated = [...conditions];
+      const [moved] = updated.splice(dragGroupIdx, 1);
+      updated.splice(idx, 0, moved);
+      setConditions(updated);
+
+      // Remap indices
+      const indexMap = {};
+      conditions.forEach((c, oldIdx) => {
+        const newIdx = updated.findIndex((u) => u.id === c.id);
+        indexMap[oldIdx] = newIdx;
+      });
+
+      if (activeConditionIdx !== null && activeConditionIdx !== undefined) {
+        setActiveConditionIdx(indexMap[activeConditionIdx] ?? 0);
+      }
+      if (controlConditionIdx !== null && controlConditionIdx !== undefined) {
+        setControlConditionIdx(indexMap[controlConditionIdx] ?? null);
+      }
+      if (normRefIdx !== null && normRefIdx !== undefined) {
+        setNormRefIdx(indexMap[normRefIdx] ?? null);
+      }
+
+      setDragGroupIdx(null);
+      setDragOverIdx(null);
+    },
+    [dragGroupIdx, conditions, setConditions, activeConditionIdx, setActiveConditionIdx,
+     controlConditionIdx, setControlConditionIdx, normRefIdx, setNormRefIdx],
+  );
+
+  const handleGroupDragEnd = useCallback(() => {
+    setDragGroupIdx(null);
+    setDragOverIdx(null);
+  }, []);
+
   const detectedRows = useMemo(() => {
     const rows = new Set();
     detectedWells.forEach((wid) => rows.add(wid[0]));
     return PLATE_ROWS.filter((r) => rows.has(r));
   }, [detectedWells]);
 
+  const detectedCols = useMemo(() => {
+    const cols = new Set();
+    detectedWells.forEach((wid) => cols.add(parseInt(wid.slice(1), 10)));
+    return PLATE_COLS.filter((c) => cols.has(c));
+  }, [detectedWells]);
+
   const activeGroup = activeConditionIdx !== null && activeConditionIdx >= 0 && activeConditionIdx < conditions.length
     ? conditions[activeConditionIdx]
     : null;
+
+  // Build tooltip content for hovered well
+  const tooltipContent = useMemo(() => {
+    if (!hoveredWell || !wellAbsorbance[hoveredWell]) return null;
+    const entries = wellAbsorbance[hoveredWell];
+    const filenames = Object.keys(entries);
+    const values = Object.values(entries);
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    return { filenames, entries, mean };
+  }, [hoveredWell, wellAbsorbance]);
 
   return (
     <div
@@ -249,6 +332,11 @@ export default function PlateMapStep({
           {conditions.map((cond, idx) => (
             <div
               key={cond.id}
+              draggable
+              onDragStart={() => handleGroupDragStart(idx)}
+              onDragOver={(e) => handleGroupDragOver(e, idx)}
+              onDrop={() => handleGroupDrop(idx)}
+              onDragEnd={handleGroupDragEnd}
               onClick={() => setActiveConditionIdx(idx)}
               style={{
                 display: 'flex',
@@ -259,11 +347,30 @@ export default function PlateMapStep({
                 borderRadius: 8,
                 border: idx === activeConditionIdx ? '1px solid #3b82f6' : '1px solid #e2e8f0',
                 borderLeft: idx === activeConditionIdx ? '3px solid #3b82f6' : '1px solid #e2e8f0',
-                boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                cursor: 'pointer',
-                transition: 'border-color 0.15s',
+                borderTop: dragOverIdx === idx && dragGroupIdx !== idx ? '2px solid #3b82f6' : undefined,
+                boxShadow: dragGroupIdx === idx ? '0 4px 12px rgba(0,0,0,0.15)' : '0 1px 2px rgba(0,0,0,0.05)',
+                opacity: dragGroupIdx === idx ? 0.6 : 1,
+                cursor: 'grab',
+                transition: 'border-color 0.15s, box-shadow 0.15s, opacity 0.15s',
               }}
             >
+              <div
+                style={{
+                  width: 6,
+                  height: 20,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'center',
+                  gap: 2,
+                  flexShrink: 0,
+                  cursor: 'grab',
+                }}
+                title="Drag to reorder"
+              >
+                <div style={{ width: 6, height: 2, backgroundColor: '#cbd5e1', borderRadius: 1 }} />
+                <div style={{ width: 6, height: 2, backgroundColor: '#cbd5e1', borderRadius: 1 }} />
+                <div style={{ width: 6, height: 2, backgroundColor: '#cbd5e1', borderRadius: 1 }} />
+              </div>
               <div
                 style={{
                   width: 20,
@@ -278,6 +385,8 @@ export default function PlateMapStep({
                 value={cond.name}
                 onChange={(e) => handleNameChange(idx, e.target.value)}
                 onClick={(e) => e.stopPropagation()}
+                onDragStart={(e) => e.stopPropagation()}
+                draggable={false}
                 style={{
                   flex: 1,
                   border: 'none',
@@ -335,77 +444,33 @@ export default function PlateMapStep({
         {conditions.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div>
-              <label
-                style={{
-                  display: 'block',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: '#64748b',
-                  marginBottom: 4,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                }}
-              >
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 Control Group (t-test)
               </label>
               <select
                 value={controlConditionIdx ?? ''}
                 onChange={(e) => setControlConditionIdx(e.target.value === '' ? null : Number(e.target.value))}
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  borderRadius: 6,
-                  border: '1px solid #e2e8f0',
-                  fontSize: 14,
-                  color: '#1e293b',
-                  backgroundColor: '#ffffff',
-                  cursor: 'pointer',
-                  outline: 'none',
-                }}
+                style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: 14, color: '#1e293b', backgroundColor: '#ffffff', cursor: 'pointer', outline: 'none' }}
               >
                 <option value="">-- Select --</option>
                 {conditions.map((cond, idx) => (
-                  <option key={cond.id} value={idx}>
-                    {cond.name}
-                  </option>
+                  <option key={cond.id} value={idx}>{cond.name}</option>
                 ))}
               </select>
             </div>
 
             <div>
-              <label
-                style={{
-                  display: 'block',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: '#64748b',
-                  marginBottom: 4,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                }}
-              >
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 Normalization Reference (100%)
               </label>
               <select
                 value={normRefIdx ?? ''}
                 onChange={(e) => setNormRefIdx(e.target.value === '' ? null : Number(e.target.value))}
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  borderRadius: 6,
-                  border: '1px solid #e2e8f0',
-                  fontSize: 14,
-                  color: '#1e293b',
-                  backgroundColor: '#ffffff',
-                  cursor: 'pointer',
-                  outline: 'none',
-                }}
+                style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: 14, color: '#1e293b', backgroundColor: '#ffffff', cursor: 'pointer', outline: 'none' }}
               >
                 <option value="">-- Select --</option>
                 {conditions.map((cond, idx) => (
-                  <option key={cond.id} value={idx}>
-                    {cond.name}
-                  </option>
+                  <option key={cond.id} value={idx}>{cond.name}</option>
                 ))}
               </select>
             </div>
@@ -414,11 +479,11 @@ export default function PlateMapStep({
       </div>
 
       {/* Right Panel — 96-well Plate Grid */}
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
         {/* Quick-assign buttons */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginRight: 4 }}>
-            Quick assign:
+            Rows:
           </span>
           {detectedRows.map((row) => (
             <button
@@ -426,37 +491,39 @@ export default function PlateMapStep({
               onClick={() => handleRowAssign(row)}
               disabled={!activeGroup}
               style={{
-                width: 28,
-                height: 28,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                border: '1px solid #e2e8f0',
-                borderRadius: 4,
-                backgroundColor: '#ffffff',
-                color: '#1e293b',
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: activeGroup ? 'pointer' : 'default',
-                opacity: activeGroup ? 1 : 0.5,
+                width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                border: '1px solid #e2e8f0', borderRadius: 4, backgroundColor: '#ffffff',
+                color: '#1e293b', fontSize: 12, fontWeight: 600,
+                cursor: activeGroup ? 'pointer' : 'default', opacity: activeGroup ? 1 : 0.5,
               }}
             >
               {row}
             </button>
           ))}
+          <span style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginLeft: 12, marginRight: 4 }}>
+            Cols:
+          </span>
+          {detectedCols.map((col) => (
+            <button
+              key={col}
+              onClick={() => handleColAssign(col)}
+              disabled={!activeGroup}
+              style={{
+                minWidth: 28, height: 28, padding: '0 4px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                border: '1px solid #e2e8f0', borderRadius: 4, backgroundColor: '#ffffff',
+                color: '#1e293b', fontSize: 12, fontWeight: 600,
+                cursor: activeGroup ? 'pointer' : 'default', opacity: activeGroup ? 1 : 0.5,
+              }}
+            >
+              {col}
+            </button>
+          ))}
           <button
             onClick={handleClearAll}
             style={{
-              padding: '4px 12px',
-              height: 28,
-              border: '1px solid #e2e8f0',
-              borderRadius: 4,
-              backgroundColor: '#ffffff',
-              color: '#ef4444',
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: 'pointer',
-              marginLeft: 8,
+              padding: '4px 12px', height: 28, border: '1px solid #e2e8f0', borderRadius: 4,
+              backgroundColor: '#ffffff', color: '#ef4444', fontSize: 12, fontWeight: 600,
+              cursor: 'pointer', marginLeft: 8,
             }}
           >
             Clear All
@@ -469,29 +536,15 @@ export default function PlateMapStep({
           onMouseUp={handleMouseUp}
           onMouseLeave={() => {
             if (isDragging) handleMouseUp();
+            setHoveredWell(null);
           }}
           style={{ display: 'inline-block' }}
         >
           {/* Column headers */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '28px repeat(12, 36px)',
-              gap: 4,
-              marginBottom: 4,
-            }}
-          >
+          <div style={{ display: 'grid', gridTemplateColumns: '28px repeat(12, 36px)', gap: 4, marginBottom: 4 }}>
             <div />
             {PLATE_COLS.map((col) => (
-              <div
-                key={col}
-                style={{
-                  textAlign: 'center',
-                  fontSize: 11,
-                  fontWeight: 600,
-                  color: '#94a3b8',
-                }}
-              >
+              <div key={col} style={{ textAlign: 'center', fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>
                 {col}
               </div>
             ))}
@@ -499,25 +552,8 @@ export default function PlateMapStep({
 
           {/* Rows */}
           {PLATE_ROWS.map((row, ri) => (
-            <div
-              key={row}
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '28px repeat(12, 36px)',
-                gap: 4,
-                marginBottom: 4,
-              }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 11,
-                  fontWeight: 600,
-                  color: '#94a3b8',
-                }}
-              >
+            <div key={row} style={{ display: 'grid', gridTemplateColumns: '28px repeat(12, 36px)', gap: 4, marginBottom: 4 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>
                 {row}
               </div>
               {PLATE_COLS.map((col, ci) => {
@@ -561,30 +597,60 @@ export default function PlateMapStep({
                       if (!detected && !isDragging) return;
                       handleMouseMove(ri, ci);
                     }}
+                    onMouseEnter={() => { if (detected && !isDragging) setHoveredWell(wid); }}
+                    onMouseLeave={() => setHoveredWell(null)}
                     onClick={(e) => {
                       if (isDragging) return;
                       e.stopPropagation();
                       handleWellClick(wid);
                     }}
                     style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: '50%',
-                      backgroundColor: bgColor,
-                      border: `2px solid ${borderColor}`,
-                      opacity,
-                      cursor,
-                      boxShadow,
+                      width: 36, height: 36, borderRadius: '50%',
+                      backgroundColor: bgColor, border: `2px solid ${borderColor}`,
+                      opacity, cursor, boxShadow,
                       transition: 'box-shadow 0.1s, background-color 0.1s',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 9,
-                      color: assigned ? '#ffffff' : '#94a3b8',
-                      fontWeight: 500,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 9, color: assigned ? '#ffffff' : '#94a3b8', fontWeight: 500,
+                      position: 'relative',
                     }}
                   >
                     {detected ? wid : ''}
+                    {/* Tooltip */}
+                    {hoveredWell === wid && tooltipContent && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          bottom: '110%',
+                          left: '50%',
+                          transform: 'translateX(-50%)',
+                          backgroundColor: '#1e293b',
+                          color: '#f1f5f9',
+                          padding: '8px 12px',
+                          borderRadius: 8,
+                          fontSize: 11,
+                          lineHeight: 1.5,
+                          whiteSpace: 'nowrap',
+                          zIndex: 100,
+                          pointerEvents: 'none',
+                          boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
+                          minWidth: 140,
+                        }}
+                      >
+                        <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 12 }}>{wid}</div>
+                        {tooltipContent.filenames.map((fname) => (
+                          <div key={fname} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                            <span style={{ color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 120 }}>{fname}</span>
+                            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{tooltipContent.entries[fname].toFixed(4)}</span>
+                          </div>
+                        ))}
+                        {tooltipContent.filenames.length > 1 && (
+                          <div style={{ borderTop: '1px solid #334155', marginTop: 4, paddingTop: 4, display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                            <span style={{ fontWeight: 600 }}>Mean</span>
+                            <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{tooltipContent.mean.toFixed(4)}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}

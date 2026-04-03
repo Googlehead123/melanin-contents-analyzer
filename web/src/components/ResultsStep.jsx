@@ -2,10 +2,11 @@ import React, { useMemo, useRef, useCallback } from 'react';
 import { Plot } from '../utils/plotly';
 import { CHART_THEMES, BAR_COLORS } from '../utils/constants';
 import {
-  calculateGroupConcentrations,
+  calculateMultiPlateConcentrations,
   normalizeToReference,
   calculateStatistics,
   runTTests,
+  detectOutliers,
 } from '../utils/analysis';
 import { exportExcel, exportConfigJSON, exportPlotlyPNG } from '../utils/export';
 
@@ -129,33 +130,120 @@ function formatPValue(p) {
 }
 
 export default function ResultsStep({
-  parsedData,
-  conditions,
+  plates,
   slope,
   intercept,
   normRefIdx,
   controlConditionIdx,
   chartTheme,
+  chartOptions,
+  excludedWells,
+  setExcludedWells,
 }) {
   const plotRef = useRef(null);
 
-  const hasWells = conditions.some((c) => c.wells.length > 0);
-  const hasData = Object.keys(parsedData).length > 0;
+  // Collect all unique group names across all plates (preserving order)
+  const allConditions = useMemo(() => {
+    const seen = new Set();
+    const result = [];
+    for (const plate of plates) {
+      for (const cond of plate.conditions) {
+        if (!seen.has(cond.name)) {
+          seen.add(cond.name);
+          result.push(cond);
+        }
+      }
+    }
+    return result;
+  }, [plates]);
+
+  const groupNames = useMemo(() => allConditions.map((c) => c.name), [allConditions]);
+
+  const hasWells = plates.some((p) => p.conditions.some((c) => c.wells.length > 0));
+  const hasData = plates.some((p) => Object.keys(p.files).length > 0);
+
+  // Build a flat measurement list across all plates (for data tables)
+  const measurementList = useMemo(() => {
+    const list = [];
+    for (const plate of plates) {
+      const filenames = Object.keys(plate.files);
+      for (const fname of filenames) {
+        list.push({ plate, fname });
+      }
+    }
+    return list;
+  }, [plates]);
+
+  // Outlier detection across all plates
+  const outliers = useMemo(() => {
+    if (!hasWells || !hasData) return {};
+    const combined = {};
+    for (const plate of plates) {
+      const plateOutliers = detectOutliers(plate.files, plate.conditions);
+      for (const [groupName, arr] of Object.entries(plateOutliers)) {
+        if (!combined[groupName]) combined[groupName] = [];
+        combined[groupName].push(...arr);
+      }
+    }
+    return combined;
+  }, [plates, hasWells, hasData]);
+
+  const totalOutliers = useMemo(() => {
+    return Object.values(outliers).reduce((sum, arr) => sum + arr.length, 0);
+  }, [outliers]);
+
+  const excludedCount = useMemo(() => {
+    let count = 0;
+    for (const arr of Object.values(outliers)) {
+      for (const o of arr) {
+        if (excludedWells.has(`${o.well}:${o.file}`)) count++;
+      }
+    }
+    return count;
+  }, [outliers, excludedWells]);
+
+  const handleToggleExclude = useCallback((wellKey) => {
+    setExcludedWells((prev) => {
+      const next = new Set(prev);
+      if (next.has(wellKey)) {
+        next.delete(wellKey);
+      } else {
+        next.add(wellKey);
+      }
+      return next;
+    });
+  }, [setExcludedWells]);
+
+  const handleExcludeAll = useCallback(() => {
+    const allKeys = new Set();
+    for (const arr of Object.values(outliers)) {
+      for (const o of arr) {
+        allKeys.add(`${o.well}:${o.file}`);
+      }
+    }
+    setExcludedWells(allKeys);
+  }, [outliers, setExcludedWells]);
+
+  const handleIncludeAll = useCallback(() => {
+    setExcludedWells(new Set());
+  }, [setExcludedWells]);
 
   const analysis = useMemo(() => {
     if (!hasWells || !hasData) return null;
 
     try {
-      const concentrations = calculateGroupConcentrations(
-        parsedData,
-        conditions,
+      const effectiveExcluded = excludedWells.size > 0 ? excludedWells : null;
+      const concentrations = calculateMultiPlateConcentrations(
+        plates,
         slope,
-        intercept
+        intercept,
+        effectiveExcluded
       );
-      const safeNormIdx = Math.min(Math.max(normRefIdx ?? 0, 0), conditions.length - 1);
-      const safeCtrlIdx = Math.min(Math.max(controlConditionIdx ?? 0, 0), conditions.length - 1);
-      const refName = conditions[safeNormIdx]?.name;
-      const ctrlName = conditions[safeCtrlIdx]?.name;
+
+      const safeNormIdx = Math.min(Math.max(normRefIdx ?? 0, 0), allConditions.length - 1);
+      const safeCtrlIdx = Math.min(Math.max(controlConditionIdx ?? 0, 0), allConditions.length - 1);
+      const refName = allConditions[safeNormIdx]?.name;
+      const ctrlName = allConditions[safeCtrlIdx]?.name;
 
       if (!refName || !ctrlName) {
         return { error: 'Invalid normalization or control group index.' };
@@ -170,14 +258,15 @@ export default function ResultsStep({
       return { error: err.message || 'Analysis failed.' };
     }
   }, [
-    parsedData,
-    conditions,
+    plates,
     slope,
     intercept,
     normRefIdx,
     controlConditionIdx,
     hasWells,
     hasData,
+    excludedWells,
+    allConditions,
   ]);
 
   const handleExportPNG = useCallback(() => {
@@ -187,25 +276,25 @@ export default function ResultsStep({
   const handleExportExcel = useCallback(() => {
     if (!analysis || analysis.error) return;
     exportExcel(
-      parsedData,
-      conditions,
+      plates,
       analysis.concentrations,
       analysis.normalized,
       analysis.stats,
       analysis.ttestResults
     );
-  }, [parsedData, conditions, analysis]);
+  }, [plates, analysis]);
 
   const handleExportConfig = useCallback(() => {
     exportConfigJSON(
-      conditions,
+      plates,
       slope,
       intercept,
       normRefIdx,
       controlConditionIdx,
-      chartTheme
+      chartTheme,
+      chartOptions
     );
-  }, [conditions, slope, intercept, normRefIdx, controlConditionIdx, chartTheme]);
+  }, [plates, slope, intercept, normRefIdx, controlConditionIdx, chartTheme, chartOptions]);
 
   if (!hasWells) {
     return (
@@ -241,10 +330,9 @@ export default function ResultsStep({
 
   const { concentrations, normalized, stats, ttestResults } = analysis;
   const theme = CHART_THEMES[chartTheme] || CHART_THEMES.white;
-  const groupNames = conditions.map((c) => c.name);
-  const filenames = Object.keys(parsedData);
 
   // Build Plotly chart data
+  const opts = chartOptions || {};
   const chartData = [
     {
       type: 'bar',
@@ -253,39 +341,47 @@ export default function ResultsStep({
       error_y: {
         type: 'data',
         array: stats.map((s) => s.sd),
-        visible: true,
+        visible: opts.showErrorBars !== false,
         thickness: 1.5,
         width: 4,
         color: theme.text,
       },
       marker: {
         color: stats.map((_, i) => BAR_COLORS[i % BAR_COLORS.length]),
-        line: { width: 0 },
+        line: { width: opts.barOutline !== false ? 1 : 0, color: '#37474F' },
       },
-      text: stats.map((s) => s.mean.toFixed(2)),
-      textposition: 'outside',
+      text: opts.showValues !== false ? stats.map((s) => s.mean.toFixed(2)) : stats.map(() => ''),
+      textposition: opts.showValues !== false ? 'outside' : 'none',
       textfont: { color: theme.text, size: 11 },
-      hovertemplate: '%{x}<br>Mean: %{y:.2f} ± %{error_y.array:.2f}<extra></extra>',
+      hovertemplate: '%{x}<br>Mean: %{y:.2f} +/- %{error_y.array:.2f}<extra></extra>',
     },
   ];
 
   // Significance annotations
   const annotations = [];
-  const maxY = Math.max(...stats.map((s) => s.mean + s.sd));
-  stats.forEach((s) => {
-    const ttest = ttestResults[s.group];
-    if (ttest && ttest.significance && ttest.significance !== '-' && ttest.significance !== 'n.s.' && ttest.significance !== 'n/a') {
-      annotations.push({
-        x: s.group,
-        y: s.mean + s.sd + maxY * 0.08,
-        text: ttest.significance,
-        showarrow: false,
-        font: { size: 14, color: theme.text, weight: 'bold' },
-        xanchor: 'center',
-        yanchor: 'bottom',
-      });
-    }
-  });
+  if (opts.showSignificance !== false) {
+    const maxY = Math.max(...stats.map((s) => s.mean + s.sd));
+    stats.forEach((s) => {
+      const ttest = ttestResults[s.group];
+      if (ttest && ttest.significance && ttest.significance !== '-' && ttest.significance !== 'n.s.' && ttest.significance !== 'n/a') {
+        annotations.push({
+          x: s.group,
+          y: s.mean + s.sd + maxY * 0.08,
+          text: ttest.significance,
+          showarrow: false,
+          font: { size: 14, color: theme.text, weight: 'bold' },
+          xanchor: 'center',
+          yanchor: 'bottom',
+        });
+      }
+    });
+  }
+
+  // Y-axis range: only set if user provided explicit bounds
+  const yAxisRange =
+    opts.yAxisMin != null || opts.yAxisMax != null
+      ? [opts.yAxisMin ?? undefined, opts.yAxisMax ?? undefined]
+      : undefined;
 
   const chartLayout = {
     template: 'none',
@@ -293,22 +389,23 @@ export default function ResultsStep({
     margin: { t: 40, r: 30, b: 60, l: 60 },
     paper_bgcolor: theme.paper,
     plot_bgcolor: theme.background,
-    font: { color: theme.text, family: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' },
+    font: { color: theme.text, size: opts.fontSize || 12, family: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' },
     xaxis: {
-      title: { text: 'Treatment Group', font: { size: 13 } },
+      title: { text: 'Treatment Group', font: { size: opts.fontSize || 12 } },
       tickfont: { size: 11 },
       gridcolor: theme.grid,
       linecolor: theme.grid,
     },
     yaxis: {
-      title: { text: 'Melanin Content (% of Reference)', font: { size: 13 } },
+      title: { text: opts.yAxisLabel || 'Melanin Content (% of Reference)', font: { size: opts.fontSize || 12 } },
       tickfont: { size: 11 },
       gridcolor: theme.grid,
       linecolor: theme.grid,
       zeroline: false,
+      ...(yAxisRange ? { range: yAxisRange } : {}),
     },
     annotations,
-    bargap: 0.3,
+    bargap: 1 - (opts.barWidth || 0.6),
   };
 
   const chartConfig = {
@@ -318,6 +415,104 @@ export default function ResultsStep({
 
   return (
     <div style={styles.container}>
+      {/* Outlier Detection */}
+      {totalOutliers > 0 && (
+        <div style={styles.section}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <h2 style={{ ...styles.sectionTitle, margin: 0 }}>
+              Outlier Detection
+            </h2>
+            <span style={{ fontSize: '0.8125rem', color: '#64748b' }}>
+              {totalOutliers} outlier{totalOutliers !== 1 ? 's' : ''} detected ({excludedCount} excluded)
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+            <button
+              style={{ ...styles.btnSecondary, padding: '6px 14px', fontSize: '0.75rem' }}
+              onClick={handleExcludeAll}
+            >
+              Exclude All
+            </button>
+            <button
+              style={{ ...styles.btnSecondary, padding: '6px 14px', fontSize: '0.75rem' }}
+              onClick={handleIncludeAll}
+            >
+              Include All
+            </button>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={{ ...styles.th, textAlign: 'center', width: '50px' }}>Exclude</th>
+                  <th style={styles.th}>Group</th>
+                  <th style={styles.th}>Well</th>
+                  <th style={{ ...styles.th, maxWidth: '200px' }}>File</th>
+                  <th style={{ ...styles.th, textAlign: 'right' }}>Absorbance</th>
+                  <th style={{ ...styles.th, textAlign: 'right' }}>Group Mean</th>
+                  <th style={{ ...styles.th, textAlign: 'right' }}>Z-Score</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allConditions.map((cond) =>
+                  (outliers[cond.name] || []).map((o, idx) => {
+                    const wellKey = `${o.well}:${o.file}`;
+                    const isExcluded = excludedWells.has(wellKey);
+                    return (
+                      <tr
+                        key={`${cond.name}-${idx}`}
+                        style={{
+                          ...(idx % 2 === 1 ? styles.trEven : {}),
+                          ...(isExcluded ? { opacity: 0.5 } : {}),
+                        }}
+                      >
+                        <td style={{ ...styles.td, textAlign: 'center' }}>
+                          <input
+                            type="checkbox"
+                            checked={isExcluded}
+                            onChange={() => handleToggleExclude(wellKey)}
+                            aria-label={`Exclude well ${o.well} from ${o.file}`}
+                          />
+                        </td>
+                        <td style={{ ...styles.td, fontWeight: 500 }}>{cond.name}</td>
+                        <td style={{ ...styles.td, ...(isExcluded ? { textDecoration: 'line-through' } : {}) }}>
+                          {o.well}
+                        </td>
+                        <td style={{
+                          ...styles.td,
+                          maxWidth: '200px',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          ...(isExcluded ? { textDecoration: 'line-through' } : {}),
+                        }}>
+                          {o.file}
+                        </td>
+                        <td style={{ ...styles.td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {o.value.toFixed(4)}
+                        </td>
+                        <td style={{ ...styles.td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {o.groupMean.toFixed(4)}
+                        </td>
+                        <td style={{
+                          ...styles.td,
+                          textAlign: 'right',
+                          fontVariantNumeric: 'tabular-nums',
+                          fontWeight: 600,
+                          color: Math.abs(o.zScore) > 3 ? '#dc2626' : '#d97706',
+                        }}>
+                          {o.zScore > 0 ? '+' : ''}{o.zScore.toFixed(2)}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Bar Chart */}
       <div style={styles.section}>
         <h2 style={styles.sectionTitle}>Melanin Content Analysis</h2>
@@ -389,6 +584,7 @@ export default function ResultsStep({
             <table style={styles.table}>
               <thead>
                 <tr>
+                  {plates.length > 1 && <th style={styles.th}>Plate</th>}
                   <th style={styles.th}>Measurement</th>
                   {groupNames.map((name) => (
                     <th key={name} style={{ ...styles.th, textAlign: 'right' }}>
@@ -398,22 +594,35 @@ export default function ResultsStep({
                 </tr>
               </thead>
               <tbody>
-                {filenames.map((fname, i) => (
-                  <tr key={fname} style={i % 2 === 1 ? styles.trEven : {}}>
+                {measurementList.map((m, i) => (
+                  <tr key={`${m.plate.name}-${m.fname}`} style={i % 2 === 1 ? styles.trEven : {}}>
+                    {plates.length > 1 && (
+                      <td style={{ ...styles.td, fontWeight: 500, color: '#64748b' }}>
+                        {m.plate.name}
+                      </td>
+                    )}
                     <td style={{ ...styles.td, fontWeight: 500, maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {fname}
+                      {m.fname}
                     </td>
-                    {conditions.map((cond) => {
+                    {groupNames.map((gname) => {
+                      const cond = m.plate.conditions.find((c) => c.name === gname);
+                      if (!cond) {
+                        return (
+                          <td key={gname} style={{ ...styles.td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                            -
+                          </td>
+                        );
+                      }
                       const vals = cond.wells
-                        .filter((w) => w in parsedData[fname])
-                        .map((w) => parsedData[fname][w]);
+                        .filter((w) => w in m.plate.files[m.fname])
+                        .map((w) => m.plate.files[m.fname][w]);
                       const meanAbs =
                         vals.length > 0
                           ? vals.reduce((a, b) => a + b, 0) / vals.length
                           : null;
                       return (
                         <td
-                          key={cond.id}
+                          key={gname}
                           style={{ ...styles.td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
                         >
                           {meanAbs !== null ? meanAbs.toFixed(4) : '-'}
@@ -436,6 +645,7 @@ export default function ResultsStep({
             <table style={styles.table}>
               <thead>
                 <tr>
+                  {plates.length > 1 && <th style={styles.th}>Plate</th>}
                   <th style={styles.th}>Measurement</th>
                   {groupNames.map((name) => (
                     <th key={name} style={{ ...styles.th, textAlign: 'right' }}>
@@ -445,10 +655,15 @@ export default function ResultsStep({
                 </tr>
               </thead>
               <tbody>
-                {filenames.map((fname, i) => (
-                  <tr key={fname} style={i % 2 === 1 ? styles.trEven : {}}>
+                {measurementList.map((m, i) => (
+                  <tr key={`${m.plate.name}-${m.fname}`} style={i % 2 === 1 ? styles.trEven : {}}>
+                    {plates.length > 1 && (
+                      <td style={{ ...styles.td, fontWeight: 500, color: '#64748b' }}>
+                        {m.plate.name}
+                      </td>
+                    )}
                     <td style={{ ...styles.td, fontWeight: 500, maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {fname}
+                      {m.fname}
                     </td>
                     {groupNames.map((gname) => {
                       const vals = concentrations[gname] || [];
@@ -466,6 +681,7 @@ export default function ResultsStep({
                 ))}
                 {/* Mean row */}
                 <tr style={{ backgroundColor: '#f1f5f9', fontWeight: 600 }}>
+                  {plates.length > 1 && <td style={{ ...styles.td, fontWeight: 600 }} />}
                   <td style={{ ...styles.td, fontWeight: 600 }}>Mean</td>
                   {groupNames.map((gname) => {
                     const vals = concentrations[gname] || [];
@@ -497,6 +713,7 @@ export default function ResultsStep({
             <table style={styles.table}>
               <thead>
                 <tr>
+                  {plates.length > 1 && <th style={styles.th}>Plate</th>}
                   <th style={styles.th}>Measurement</th>
                   {groupNames.map((name) => (
                     <th key={name} style={{ ...styles.th, textAlign: 'right' }}>
@@ -506,10 +723,15 @@ export default function ResultsStep({
                 </tr>
               </thead>
               <tbody>
-                {filenames.map((fname, i) => (
-                  <tr key={fname} style={i % 2 === 1 ? styles.trEven : {}}>
+                {measurementList.map((m, i) => (
+                  <tr key={`${m.plate.name}-${m.fname}`} style={i % 2 === 1 ? styles.trEven : {}}>
+                    {plates.length > 1 && (
+                      <td style={{ ...styles.td, fontWeight: 500, color: '#64748b' }}>
+                        {m.plate.name}
+                      </td>
+                    )}
                     <td style={{ ...styles.td, fontWeight: 500, maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {fname}
+                      {m.fname}
                     </td>
                     {groupNames.map((gname) => {
                       const vals = normalized[gname] || [];

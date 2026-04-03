@@ -1,4 +1,4 @@
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useRef, useMemo } from 'react';
 import { CHART_THEMES } from '../utils/constants';
 import { loadConfigJSON } from '../utils/export';
 
@@ -151,6 +151,126 @@ const styles = {
   hiddenInput: {
     display: 'none',
   },
+  optionRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '8px 0',
+    borderBottom: '1px solid #f1f5f9',
+  },
+  optionLabel: {
+    fontSize: '0.8125rem',
+    fontWeight: 500,
+    color: '#475569',
+  },
+  optionControl: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
+  rangeSlider: {
+    width: '120px',
+    cursor: 'pointer',
+    accentColor: '#3b82f6',
+  },
+  rangeValue: {
+    fontSize: '0.8125rem',
+    fontWeight: 600,
+    color: '#1e293b',
+    minWidth: '32px',
+    textAlign: 'right',
+  },
+  numberInputSmall: {
+    width: '72px',
+    padding: '6px 8px',
+    borderRadius: '6px',
+    border: '1px solid #e2e8f0',
+    fontSize: '0.8125rem',
+    color: '#1e293b',
+    outline: 'none',
+    textAlign: 'right',
+    boxSizing: 'border-box',
+  },
+  textInputWide: {
+    width: '280px',
+    padding: '6px 10px',
+    borderRadius: '6px',
+    border: '1px solid #e2e8f0',
+    fontSize: '0.8125rem',
+    color: '#1e293b',
+    outline: 'none',
+    boxSizing: 'border-box',
+  },
+  checkbox: {
+    width: '18px',
+    height: '18px',
+    cursor: 'pointer',
+    accentColor: '#3b82f6',
+  },
+  subsectionTitle: {
+    fontSize: '0.8125rem',
+    fontWeight: 600,
+    color: '#94a3b8',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+    margin: '12px 0 4px 0',
+  },
+  toggle: {
+    position: 'relative',
+    width: '44px',
+    height: '24px',
+    borderRadius: '12px',
+    cursor: 'pointer',
+    transition: 'background-color 0.2s',
+    border: 'none',
+    padding: 0,
+    flexShrink: 0,
+  },
+  toggleKnob: {
+    position: 'absolute',
+    top: '2px',
+    width: '20px',
+    height: '20px',
+    borderRadius: '50%',
+    backgroundColor: '#ffffff',
+    transition: 'left 0.2s',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
+  },
+  doseTable: {
+    width: '100%',
+    borderCollapse: 'collapse',
+    fontSize: '0.8125rem',
+    marginTop: '12px',
+  },
+  doseTh: {
+    padding: '8px 12px',
+    textAlign: 'left',
+    fontWeight: 600,
+    color: '#475569',
+    borderBottom: '2px solid #e2e8f0',
+    backgroundColor: '#f8fafc',
+  },
+  doseTd: {
+    padding: '6px 12px',
+    borderBottom: '1px solid #f1f5f9',
+    color: '#334155',
+  },
+  doseInput: {
+    width: '120px',
+    padding: '6px 8px',
+    borderRadius: '6px',
+    border: '1px solid #e2e8f0',
+    fontSize: '0.8125rem',
+    color: '#1e293b',
+    outline: 'none',
+    textAlign: 'right',
+    boxSizing: 'border-box',
+  },
+  doseHint: {
+    fontSize: '0.75rem',
+    color: '#94a3b8',
+    marginTop: '8px',
+  },
 };
 
 export default function SettingsStep({
@@ -159,12 +279,17 @@ export default function SettingsStep({
   intercept,
   setIntercept,
   conditions,
+  setConditions,
   normRefIdx,
   setNormRefIdx,
   controlConditionIdx,
   setControlConditionIdx,
   chartTheme,
   setChartTheme,
+  chartOptions,
+  setChartOptions,
+  doseResponseEnabled,
+  setDoseResponseEnabled,
   onLoadConfig,
   onSaveConfig,
 }) {
@@ -217,6 +342,13 @@ export default function SettingsStep({
     [setChartTheme]
   );
 
+  const updateChartOption = useCallback(
+    (key, value) => {
+      setChartOptions((prev) => ({ ...prev, [key]: value }));
+    },
+    [setChartOptions]
+  );
+
   const handleLoadClick = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
@@ -234,6 +366,24 @@ export default function SettingsStep({
       e.target.value = '';
     },
     [onLoadConfig]
+  );
+
+  const handleDoseChange = useCallback(
+    (conditionId, value) => {
+      setConditions((prev) =>
+        prev.map((c) =>
+          c.id === conditionId
+            ? { ...c, dose: value === '' ? null : parseFloat(value) || null }
+            : c
+        )
+      );
+    },
+    [setConditions]
+  );
+
+  const dosesWithValues = useMemo(
+    () => conditions.filter((c) => typeof c.dose === 'number' && c.dose > 0).length,
+    [conditions]
   );
 
   const themeKeys = Object.keys(CHART_THEMES);
@@ -317,6 +467,81 @@ export default function SettingsStep({
         </div>
       </div>
 
+      {/* Dose-Response Analysis */}
+      <div style={styles.section}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: doseResponseEnabled ? '16px' : 0 }}>
+          <h2 style={{ ...styles.sectionTitle, margin: 0 }}>Dose-Response Analysis</h2>
+          <button
+            type="button"
+            style={{
+              ...styles.toggle,
+              backgroundColor: doseResponseEnabled ? '#3b82f6' : '#cbd5e1',
+            }}
+            onClick={() => setDoseResponseEnabled((prev) => !prev)}
+            role="switch"
+            aria-checked={doseResponseEnabled}
+            aria-label="Toggle dose-response analysis"
+          >
+            <div
+              style={{
+                ...styles.toggleKnob,
+                left: doseResponseEnabled ? '22px' : '2px',
+              }}
+            />
+          </button>
+        </div>
+        {doseResponseEnabled && (
+          <>
+            <table style={styles.doseTable}>
+              <thead>
+                <tr>
+                  <th style={styles.doseTh}>Group</th>
+                  <th style={{ ...styles.doseTh, textAlign: 'right' }}>Dose (concentration)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {conditions.map((cond, i) => (
+                  <tr key={cond.id} style={i % 2 === 1 ? { backgroundColor: '#f8fafc' } : {}}>
+                    <td style={{ ...styles.doseTd, fontWeight: 500 }}>
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          width: '10px',
+                          height: '10px',
+                          borderRadius: '50%',
+                          backgroundColor: cond.color,
+                          marginRight: '8px',
+                          verticalAlign: 'middle',
+                        }}
+                      />
+                      {cond.name}
+                    </td>
+                    <td style={{ ...styles.doseTd, textAlign: 'right' }}>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        placeholder="--"
+                        value={typeof cond.dose === 'number' ? cond.dose : ''}
+                        onChange={(e) => handleDoseChange(cond.id, e.target.value)}
+                        style={styles.doseInput}
+                        onFocus={(e) => { e.currentTarget.style.borderColor = '#3b82f6'; }}
+                        onBlur={(e) => { e.currentTarget.style.borderColor = '#e2e8f0'; }}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p style={styles.doseHint}>
+              {dosesWithValues >= 3
+                ? `${dosesWithValues} groups with doses set. Curve fitting will run on the Results step.`
+                : `Set doses for at least 3 groups to enable 4PL curve fitting (${dosesWithValues}/3).`}
+            </p>
+          </>
+        )}
+      </div>
+
       {/* Chart Theme */}
       <div style={styles.section}>
         <h2 style={styles.sectionTitle}>Chart Theme</h2>
@@ -376,6 +601,153 @@ export default function SettingsStep({
               </div>
             );
           })}
+        </div>
+      </div>
+
+      {/* Chart Customization */}
+      <div style={styles.section}>
+        <h2 style={styles.sectionTitle}>Chart Customization</h2>
+
+        <p style={styles.subsectionTitle}>Font Sizes</p>
+        <div style={styles.optionRow}>
+          <span style={styles.optionLabel}>Title Font Size</span>
+          <div style={styles.optionControl}>
+            <input
+              type="number"
+              min={10}
+              max={24}
+              value={chartOptions.titleFontSize}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10);
+                if (!isNaN(val) && val >= 10 && val <= 24) updateChartOption('titleFontSize', val);
+              }}
+              style={styles.numberInputSmall}
+            />
+          </div>
+        </div>
+        <div style={styles.optionRow}>
+          <span style={styles.optionLabel}>Axis / Label Font Size</span>
+          <div style={styles.optionControl}>
+            <input
+              type="number"
+              min={8}
+              max={18}
+              value={chartOptions.fontSize}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10);
+                if (!isNaN(val) && val >= 8 && val <= 18) updateChartOption('fontSize', val);
+              }}
+              style={styles.numberInputSmall}
+            />
+          </div>
+        </div>
+
+        <p style={styles.subsectionTitle}>Bar Options</p>
+        <div style={styles.optionRow}>
+          <span style={styles.optionLabel}>Bar Width</span>
+          <div style={styles.optionControl}>
+            <input
+              type="range"
+              min={0.2}
+              max={1.0}
+              step={0.1}
+              value={chartOptions.barWidth}
+              onChange={(e) => updateChartOption('barWidth', parseFloat(e.target.value))}
+              style={styles.rangeSlider}
+            />
+            <span style={styles.rangeValue}>{chartOptions.barWidth.toFixed(1)}</span>
+          </div>
+        </div>
+        <div style={styles.optionRow}>
+          <span style={styles.optionLabel}>Bar Outline</span>
+          <div style={styles.optionControl}>
+            <input
+              type="checkbox"
+              checked={chartOptions.barOutline}
+              onChange={(e) => updateChartOption('barOutline', e.target.checked)}
+              style={styles.checkbox}
+            />
+          </div>
+        </div>
+        <div style={styles.optionRow}>
+          <span style={styles.optionLabel}>Show Values on Bars</span>
+          <div style={styles.optionControl}>
+            <input
+              type="checkbox"
+              checked={chartOptions.showValues}
+              onChange={(e) => updateChartOption('showValues', e.target.checked)}
+              style={styles.checkbox}
+            />
+          </div>
+        </div>
+
+        <p style={styles.subsectionTitle}>Error Bars</p>
+        <div style={styles.optionRow}>
+          <span style={styles.optionLabel}>Show Error Bars</span>
+          <div style={styles.optionControl}>
+            <input
+              type="checkbox"
+              checked={chartOptions.showErrorBars}
+              onChange={(e) => updateChartOption('showErrorBars', e.target.checked)}
+              style={styles.checkbox}
+            />
+          </div>
+        </div>
+
+        <p style={styles.subsectionTitle}>Significance</p>
+        <div style={styles.optionRow}>
+          <span style={styles.optionLabel}>Show Significance Markers</span>
+          <div style={styles.optionControl}>
+            <input
+              type="checkbox"
+              checked={chartOptions.showSignificance}
+              onChange={(e) => updateChartOption('showSignificance', e.target.checked)}
+              style={styles.checkbox}
+            />
+          </div>
+        </div>
+
+        <p style={styles.subsectionTitle}>Y-Axis</p>
+        <div style={styles.optionRow}>
+          <span style={styles.optionLabel}>Y-Axis Min</span>
+          <div style={styles.optionControl}>
+            <input
+              type="number"
+              value={chartOptions.yAxisMin ?? ''}
+              placeholder="Auto"
+              onChange={(e) => {
+                const raw = e.target.value.trim();
+                updateChartOption('yAxisMin', raw === '' ? null : parseFloat(raw));
+              }}
+              style={styles.numberInputSmall}
+            />
+          </div>
+        </div>
+        <div style={styles.optionRow}>
+          <span style={styles.optionLabel}>Y-Axis Max</span>
+          <div style={styles.optionControl}>
+            <input
+              type="number"
+              value={chartOptions.yAxisMax ?? ''}
+              placeholder="Auto"
+              onChange={(e) => {
+                const raw = e.target.value.trim();
+                updateChartOption('yAxisMax', raw === '' ? null : parseFloat(raw));
+              }}
+              style={styles.numberInputSmall}
+            />
+          </div>
+        </div>
+        <div style={{ ...styles.optionRow, borderBottom: 'none' }}>
+          <span style={styles.optionLabel}>Y-Axis Label</span>
+          <div style={styles.optionControl}>
+            <input
+              type="text"
+              value={chartOptions.yAxisLabel}
+              onChange={(e) => updateChartOption('yAxisLabel', e.target.value)}
+              style={styles.textInputWide}
+            />
+          </div>
         </div>
       </div>
 

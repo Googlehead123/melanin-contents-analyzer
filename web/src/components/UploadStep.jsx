@@ -163,13 +163,13 @@ if (typeof document !== 'undefined') {
   }
 }
 
-export default function UploadStep({ parsedData, onFilesProcessed, detectedWells }) {
+export default function UploadStep({ files, onFilesChange, detectedWells }) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [errors, setErrors] = useState([]);
   const fileInputRef = useRef(null);
 
-  const filenames = Object.keys(parsedData);
+  const filenames = Object.keys(files);
   const fileCount = filenames.length;
   const wellCount = detectedWells.length;
 
@@ -205,7 +205,7 @@ export default function UploadStep({ parsedData, onFilesProcessed, detectedWells
     }
 
     if (Object.keys(newData).length > 0) {
-      onFilesProcessed({ ...parsedData, ...newData });
+      onFilesChange({ ...files, ...newData });
     }
 
     if (parseErrors.length > 0) {
@@ -213,7 +213,7 @@ export default function UploadStep({ parsedData, onFilesProcessed, detectedWells
     }
 
     setIsProcessing(false);
-  }, [parsedData, onFilesProcessed]);
+  }, [files, onFilesChange]);
 
   const handleDragOver = useCallback((e) => {
     e.preventDefault();
@@ -245,15 +245,15 @@ export default function UploadStep({ parsedData, onFilesProcessed, detectedWells
   }, [processFiles]);
 
   const handleRemoveFile = useCallback((filename) => {
-    const updated = { ...parsedData };
+    const updated = { ...files };
     delete updated[filename];
-    onFilesProcessed(updated);
-  }, [parsedData, onFilesProcessed]);
+    onFilesChange(updated);
+  }, [files, onFilesChange]);
 
   const handleClearAll = useCallback(() => {
-    onFilesProcessed({});
+    onFilesChange({});
     setErrors([]);
-  }, [onFilesProcessed]);
+  }, [onFilesChange]);
 
   const handleBrowseClick = useCallback(() => {
     fileInputRef.current?.click();
@@ -331,7 +331,7 @@ export default function UploadStep({ parsedData, onFilesProcessed, detectedWells
 
           <div style={styles.fileList}>
             {filenames.map((name) => {
-              const wellsInFile = Object.keys(parsedData[name] || {}).length;
+              const wellsInFile = Object.keys(files[name] || {}).length;
               return (
                 <div key={name} style={styles.fileCard}>
                   <div style={{ display: 'flex', alignItems: 'baseline' }}>

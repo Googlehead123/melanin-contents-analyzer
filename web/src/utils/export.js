@@ -20,10 +20,12 @@ export function exportPlotlyPNG(plotlyRef, filename = 'melanin_chart.png') {
 /**
  * Export results as 4-sheet Excel workbook.
  * Sheets: Absorbance, Concentration, Normalized, Statistics
+ *
+ * Supports multi-plate: plates is an array of { name, files, conditions }.
+ * Each absorbance/concentration/normalized row includes a Plate column.
  */
 export function exportExcel(
-  parsedData,
-  conditions,
+  plates,
   concentrations,
   normalized,
   stats,
@@ -31,32 +33,51 @@ export function exportExcel(
   filename = 'melanin_analysis_results.xlsx'
 ) {
   const wb = XLSX.utils.book_new();
-  const filenames = Object.keys(parsedData);
-  const groupNames = conditions.map((c) => c.name);
 
-  // Sheet 1: Absorbance
-  const absRows = filenames.map((fname) => {
-    const row = { Measurement: fname };
-    for (const cond of conditions) {
-      const vals = cond.wells
-        .filter((w) => w in parsedData[fname])
-        .map((w) => parsedData[fname][w]);
-      row[cond.name] = vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  // Collect all unique group names across all plates (preserving order)
+  const groupNameSet = new Set();
+  for (const plate of plates) {
+    for (const cond of plate.conditions) {
+      groupNameSet.add(cond.name);
     }
-    return row;
-  });
+  }
+  const groupNames = Array.from(groupNameSet);
+
+  // Sheet 1: Absorbance (per plate, per file)
+  const absRows = [];
+  for (const plate of plates) {
+    const filenames = Object.keys(plate.files);
+    for (const fname of filenames) {
+      const row = { Plate: plate.name, Measurement: fname };
+      for (const cond of plate.conditions) {
+        const vals = cond.wells
+          .filter((w) => w in plate.files[fname])
+          .map((w) => plate.files[fname][w]);
+        row[cond.name] = vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+      }
+      absRows.push(row);
+    }
+  }
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(absRows), 'Absorbance');
 
-  // Sheet 2: Concentration
-  const concRows = filenames.map((fname, i) => {
-    const row = { Measurement: fname };
+  // Sheet 2: Concentration (aggregated across plates — indexed by row)
+  // Build a flat measurement list across all plates
+  const measurementList = [];
+  for (const plate of plates) {
+    const filenames = Object.keys(plate.files);
+    for (const fname of filenames) {
+      measurementList.push({ plate: plate.name, fname });
+    }
+  }
+  const concRows = measurementList.map((m, i) => {
+    const row = { Plate: m.plate, Measurement: m.fname };
     for (const gname of groupNames) {
       const vals = concentrations[gname] || [];
       row[gname] = i < vals.length ? vals[i] : null;
     }
     return row;
   });
-  const meanRow = { Measurement: 'Mean' };
+  const meanRow = { Plate: '', Measurement: 'Mean' };
   for (const gname of groupNames) {
     const vals = concentrations[gname] || [];
     meanRow[gname] = vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
@@ -65,8 +86,8 @@ export function exportExcel(
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(concRows), 'Concentration');
 
   // Sheet 3: Normalized
-  const normRows = filenames.map((fname, i) => {
-    const row = { Measurement: fname };
+  const normRows = measurementList.map((m, i) => {
+    const row = { Plate: m.plate, Measurement: m.fname };
     for (const gname of groupNames) {
       const vals = normalized[gname] || [];
       row[gname] = i < vals.length ? vals[i] : null;
@@ -95,22 +116,33 @@ export function exportExcel(
 
 /**
  * Export full analysis config as JSON for reproducibility.
+ * Saves the full plates array for multi-plate support.
  */
 export function exportConfigJSON(
-  conditions,
+  plates,
   slope,
   intercept,
   normRefIdx,
   controlIdx,
   chartTheme,
+  chartOptions,
   filename = 'melanin_config.json'
 ) {
   const config = {
-    conditions: conditions.map((c) => ({ id: c.id, name: c.name, color: c.color, wells: c.wells })),
+    plates: plates.map((p) => ({
+      id: p.id,
+      name: p.name,
+      conditions: p.conditions.map((c) => ({ id: c.id, name: c.name, color: c.color, wells: c.wells })),
+    })),
+    // Keep flat conditions for backwards compatibility (from first plate)
+    conditions: plates.length > 0
+      ? plates[0].conditions.map((c) => ({ id: c.id, name: c.name, color: c.color, wells: c.wells }))
+      : [],
     standardCurve: { slope, intercept },
     normalizationReference: normRefIdx,
     controlGroup: controlIdx,
     chartTheme,
+    chartOptions,
     exportedAt: new Date().toISOString(),
   };
   const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
