@@ -143,7 +143,7 @@ function parseListSheet(workbook, sheetName) {
     if (!row) continue;
     const well = String(row[wellCol] ?? '').trim();
     const absorbance = Number(row[absCol]);
-    if (well && well !== 'null' && well !== 'undefined' && !isNaN(absorbance)) {
+    if (well && well !== 'null' && well !== 'undefined' && well !== 'NaN' && well !== 'nan' && !isNaN(absorbance)) {
       wellData[well] = absorbance;
     }
   }

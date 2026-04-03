@@ -178,13 +178,22 @@ export default function App() {
   }, []);
 
   const handleLoadConfig = useCallback((config) => {
-    if (config.conditions) setConditions(config.conditions);
-    if (config.standardCurve) {
-      setSlope(config.standardCurve.slope);
-      setIntercept(config.standardCurve.intercept);
+    if (Array.isArray(config.conditions)) {
+      setConditions(
+        config.conditions.map((c, i) => ({
+          id: c.id || Date.now() + i,
+          name: c.name || `Group ${i + 1}`,
+          color: c.color || '#3b82f6',
+          wells: Array.isArray(c.wells) ? c.wells : [],
+        }))
+      );
     }
-    if (config.normalizationReference != null) setNormRefIdx(config.normalizationReference);
-    if (config.controlGroup != null) setControlConditionIdx(config.controlGroup);
+    if (config.standardCurve) {
+      if (typeof config.standardCurve.slope === 'number') setSlope(config.standardCurve.slope);
+      if (typeof config.standardCurve.intercept === 'number') setIntercept(config.standardCurve.intercept);
+    }
+    if (typeof config.normalizationReference === 'number') setNormRefIdx(config.normalizationReference);
+    if (typeof config.controlGroup === 'number') setControlConditionIdx(config.controlGroup);
     if (config.chartTheme) setChartTheme(config.chartTheme);
   }, []);
 

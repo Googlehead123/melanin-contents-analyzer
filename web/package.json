@@ -10,7 +10,6 @@
   },
   "dependencies": {
     "file-saver": "^2.0.5",
-    "html2canvas": "^1.4.1",
     "jstat": "^1.9.6",
     "plotly.js-dist-min": "^2.35.0",
     "react": "^19.0.0",

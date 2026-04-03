@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useCallback } from 'react';
-import Plot from 'react-plotly.js';
+import { Plot } from '../utils/plotly';
 import { CHART_THEMES, BAR_COLORS } from '../utils/constants';
 import {
   calculateGroupConcentrations,
@@ -152,8 +152,10 @@ export default function ResultsStep({
         slope,
         intercept
       );
-      const refName = conditions[normRefIdx]?.name;
-      const ctrlName = conditions[controlConditionIdx]?.name;
+      const safeNormIdx = Math.min(Math.max(normRefIdx ?? 0, 0), conditions.length - 1);
+      const safeCtrlIdx = Math.min(Math.max(controlConditionIdx ?? 0, 0), conditions.length - 1);
+      const refName = conditions[safeNormIdx]?.name;
+      const ctrlName = conditions[safeCtrlIdx]?.name;
 
       if (!refName || !ctrlName) {
         return { error: 'Invalid normalization or control group index.' };

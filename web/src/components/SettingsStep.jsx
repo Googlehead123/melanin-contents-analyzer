@@ -170,6 +170,10 @@ export default function SettingsStep({
 }) {
   const fileInputRef = useRef(null);
 
+  // Clamp indices to valid range
+  const safeNormRefIdx = conditions.length > 0 ? Math.min(Math.max(normRefIdx ?? 0, 0), conditions.length - 1) : 0;
+  const safeControlIdx = conditions.length > 0 ? Math.min(Math.max(controlConditionIdx ?? 0, 0), conditions.length - 1) : 0;
+
   const handleSlopeChange = useCallback(
     (e) => {
       const val = parseFloat(e.target.value);
@@ -192,14 +196,16 @@ export default function SettingsStep({
 
   const handleNormRefChange = useCallback(
     (e) => {
-      setNormRefIdx(parseInt(e.target.value, 10));
+      const val = parseInt(e.target.value, 10);
+      if (!isNaN(val)) setNormRefIdx(val);
     },
     [setNormRefIdx]
   );
 
   const handleControlChange = useCallback(
     (e) => {
-      setControlConditionIdx(parseInt(e.target.value, 10));
+      const val = parseInt(e.target.value, 10);
+      if (!isNaN(val)) setControlConditionIdx(val);
     },
     [setControlConditionIdx]
   );
@@ -284,7 +290,7 @@ export default function SettingsStep({
             <label style={styles.label}>Normalization Reference</label>
             <select
               style={styles.select}
-              value={normRefIdx}
+              value={safeNormRefIdx}
               onChange={handleNormRefChange}
             >
               {conditions.map((cond, idx) => (
@@ -298,7 +304,7 @@ export default function SettingsStep({
             <label style={styles.label}>T-test Comparison Group</label>
             <select
               style={styles.select}
-              value={controlConditionIdx}
+              value={safeControlIdx}
               onChange={handleControlChange}
             >
               {conditions.map((cond, idx) => (

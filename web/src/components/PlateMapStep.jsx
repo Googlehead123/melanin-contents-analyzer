@@ -178,7 +178,15 @@ export default function PlateMapStep({
 
   const handleNameChange = useCallback(
     (idx, name) => {
-      const updated = conditions.map((cond, i) => (i === idx ? { ...cond, name } : cond));
+      // Prevent duplicate names by appending a number
+      const otherNames = conditions.filter((_, i) => i !== idx).map((c) => c.name);
+      let finalName = name;
+      if (otherNames.includes(name) && name.trim() !== '') {
+        let suffix = 2;
+        while (otherNames.includes(`${name} (${suffix})`)) suffix++;
+        finalName = `${name} (${suffix})`;
+      }
+      const updated = conditions.map((cond, i) => (i === idx ? { ...cond, name: finalName } : cond));
       setConditions(updated);
     },
     [conditions, setConditions],
@@ -292,7 +300,7 @@ export default function PlateMapStep({
                   flexShrink: 0,
                 }}
               >
-                {cond.wells.length}
+                {cond.wells.filter((w) => detectedSet.has(w)).length}
               </span>
               <button
                 onClick={(e) => {

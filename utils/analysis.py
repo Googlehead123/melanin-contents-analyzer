@@ -122,7 +122,7 @@ def run_ttests(
             }
             continue
 
-        t_stat, p_value = stats.ttest_ind(arr, ref_values)
+        t_stat, p_value = stats.ttest_ind(arr, ref_values, equal_var=False)
         sig = _significance_marker(p_value)
         results[group_name] = {
             "t_stat": float(t_stat),

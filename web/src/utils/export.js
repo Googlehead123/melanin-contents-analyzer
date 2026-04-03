@@ -1,37 +1,20 @@
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
-import html2canvas from 'html2canvas';
+import { Plotly } from './plotly';
 
 /**
- * Export bar chart as PNG at 3x resolution.
- */
-export async function exportChartPNG(chartRef, filename = 'melanin_chart.png') {
-  if (!chartRef?.current) return;
-  const canvas = await html2canvas(chartRef.current, {
-    scale: 3,
-    backgroundColor: null,
-    useCORS: true,
-  });
-  canvas.toBlob((blob) => {
-    if (blob) saveAs(blob, filename);
-  });
-}
-
-/**
- * Export Plotly chart directly using Plotly's built-in download.
+ * Export Plotly chart as PNG at 3x resolution.
  */
 export function exportPlotlyPNG(plotlyRef, filename = 'melanin_chart.png') {
-  if (!plotlyRef?.current?.el) return;
-  const Plotly = window.Plotly || plotlyRef.current.el._context?.plotly;
-  if (Plotly) {
-    Plotly.downloadImage(plotlyRef.current.el, {
-      format: 'png',
-      width: 1200,
-      height: 600,
-      scale: 3,
-      filename: filename.replace('.png', ''),
-    });
-  }
+  const el = plotlyRef?.current?.el;
+  if (!el) return;
+  Plotly.downloadImage(el, {
+    format: 'png',
+    width: 1200,
+    height: 600,
+    scale: 3,
+    filename: filename.replace('.png', ''),
+  });
 }
 
 /**
@@ -123,7 +106,7 @@ export function exportConfigJSON(
   filename = 'melanin_config.json'
 ) {
   const config = {
-    conditions: conditions.map((c) => ({ name: c.name, color: c.color, wells: c.wells })),
+    conditions: conditions.map((c) => ({ id: c.id, name: c.name, color: c.color, wells: c.wells })),
     standardCurve: { slope, intercept },
     normalizationReference: normRefIdx,
     controlGroup: controlIdx,
