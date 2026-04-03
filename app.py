@@ -5,7 +5,7 @@ Streamlit app for analyzing melanin content from plate reader absorbance data.
 
 Workflow:
 1. Upload plate reader .xls/.xlsx files (repeated measurements)
-2. Configure well-to-treatment group mapping
+2. Configure well-to-treatment group mapping via plate grid editor
 3. Input standard curve parameters
 4. View analysis: concentrations, normalization, statistics, charts
 
@@ -27,6 +27,16 @@ from utils.analysis import (
 )
 from utils.visualization import create_bar_chart, create_plate_heatmap
 
+PLATE_ROWS = list("ABCDEFGH")
+PLATE_COLS = list(range(1, 13))
+
+# Distinct colors for up to 12 groups
+GROUP_PALETTE = [
+    "#E3F2FD", "#FFF3E0", "#E8F5E9", "#FCE4EC", "#F3E5F5",
+    "#E0F7FA", "#FFF8E1", "#EDE7F6", "#E8EAF6", "#FBE9E7",
+    "#F1F8E9", "#EFEBE9",
+]
+
 st.set_page_config(
     page_title="Melanin Contents Analyzer",
     page_icon="🔬",
@@ -35,10 +45,79 @@ st.set_page_config(
 )
 
 # ── Session state initialization ─────────────────────────────────────────────
-if "groups" not in st.session_state:
-    st.session_state.groups = {}
-if "parsed_data" not in st.session_state:
-    st.session_state.parsed_data = {}
+if "plate_grid" not in st.session_state:
+    st.session_state.plate_grid = None
+
+
+def _build_plate_grid(
+    detected_wells: set[str],
+    preset: dict[str, list[str]] | None = None,
+) -> pd.DataFrame:
+    """Build an 8x12 plate grid DataFrame for editing.
+
+    Cells with detected wells are empty (editable), others are marked '-'.
+    If preset is provided, pre-fill group names into assigned wells.
+    """
+    # Build reverse lookup: well -> group name
+    well_to_group: dict[str, str] = {}
+    if preset:
+        for group_name, wells in preset.items():
+            for w in wells:
+                well_to_group[w] = group_name
+
+    grid = {}
+    for col_num in PLATE_COLS:
+        col_vals = []
+        for row_letter in PLATE_ROWS:
+            well_id = f"{row_letter}{col_num:02d}"
+            if well_id in detected_wells:
+                col_vals.append(well_to_group.get(well_id, ""))
+            else:
+                col_vals.append("-")
+        grid[str(col_num)] = col_vals
+
+    return pd.DataFrame(grid, index=PLATE_ROWS)
+
+
+def _grid_to_groups(grid_df: pd.DataFrame) -> dict[str, list[str]]:
+    """Extract {group_name: [well_ids]} from the edited plate grid."""
+    groups: dict[str, list[str]] = {}
+    for row_letter in PLATE_ROWS:
+        if row_letter not in grid_df.index:
+            continue
+        for col_num in PLATE_COLS:
+            col_key = str(col_num)
+            if col_key not in grid_df.columns:
+                continue
+            val = str(grid_df.loc[row_letter, col_key]).strip()
+            if val and val != "-" and val != "" and val != "nan":
+                well_id = f"{row_letter}{col_num:02d}"
+                if val not in groups:
+                    groups[val] = []
+                groups[val].append(well_id)
+    return groups
+
+
+def _colorize_plate_grid(grid_df: pd.DataFrame):
+    """Apply background colors to the plate grid based on group names."""
+    # Collect unique group names (excluding '-' and empty)
+    unique_groups = []
+    for val in grid_df.values.flatten():
+        s = str(val).strip()
+        if s and s != "-" and s != "nan" and s not in unique_groups:
+            unique_groups.append(s)
+
+    color_map = {g: GROUP_PALETTE[i % len(GROUP_PALETTE)] for i, g in enumerate(unique_groups)}
+
+    def _styler(val):
+        s = str(val).strip()
+        if s in color_map:
+            return f"background-color: {color_map[s]}; font-weight: 600"
+        if s == "-":
+            return "color: #ccc"
+        return ""
+
+    return grid_df.style.map(_styler)
 
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
@@ -66,9 +145,8 @@ with st.sidebar:
         st.caption(f"Conc = (Abs − {intercept}) / {slope}")
 
     st.divider()
-    st.subheader("3. Configuration")
+    st.subheader("3. Load/Save Config")
 
-    # Save/load group config
     config_file = st.file_uploader(
         "Load group config (JSON)",
         type=["json"],
@@ -76,9 +154,9 @@ with st.sidebar:
     )
     if config_file is not None:
         try:
-            loaded = json.load(config_file)
-            st.session_state.groups = loaded
-            st.success(f"Loaded {len(loaded)} groups")
+            loaded_groups = json.load(config_file)
+            st.session_state["loaded_preset"] = loaded_groups
+            st.success(f"Loaded {len(loaded_groups)} groups")
         except Exception as e:
             st.error(f"Invalid config: {e}")
 
@@ -92,9 +170,9 @@ if uploaded_files:
             parsed_data[f.name] = well_data
         except Exception as e:
             st.error(f"Error parsing {f.name}: {e}")
-    st.session_state.parsed_data = parsed_data
 
 all_wells = get_all_wells(parsed_data) if parsed_data else []
+detected_well_set = set(all_wells)
 
 # ── Main content ─────────────────────────────────────────────────────────────
 if not parsed_data:
@@ -127,7 +205,6 @@ with tab_raw:
         pivot_df = summary_df.pivot(
             index="Well", columns="File", values="Absorbance (490nm)"
         )
-        # Add mean and SD across measurements
         pivot_df["Mean"] = pivot_df.mean(axis=1)
         pivot_df["SD"] = pivot_df.std(axis=1, ddof=1)
         st.dataframe(
@@ -148,108 +225,84 @@ with tab_raw:
 
 # ── Tab 2: Group Configuration ───────────────────────────────────────────────
 with tab_groups:
-    st.subheader("Treatment Group Mapping")
+    st.subheader("Plate Layout — Group Assignment")
     st.caption(
-        "Assign wells to treatment groups. Each group can contain one or more wells. "
-        "Wells within a group are averaged per measurement."
+        "Type a group name into each well to assign it. "
+        "Wells with the same name form a group. "
+        "Wells marked **-** have no data. Empty cells are unassigned."
     )
 
-    # Number of groups
-    num_groups = st.number_input(
-        "Number of groups",
-        min_value=1,
-        max_value=20,
-        value=max(len(st.session_state.groups), 2),
-        step=1,
+    # Reference: show absorbance heatmap above editor
+    with st.expander("Absorbance reference (first file)", expanded=False):
+        fig_ref = create_plate_heatmap(
+            parsed_data[first_file], title="Absorbance Reference"
+        )
+        st.plotly_chart(fig_ref, use_container_width=True)
+
+    # Build initial grid
+    preset = st.session_state.get("loaded_preset")
+    initial_grid = _build_plate_grid(detected_well_set, preset)
+
+    # Editable plate grid
+    edited_grid = st.data_editor(
+        initial_grid,
+        use_container_width=True,
+        key="plate_editor",
+        height=330,
     )
 
-    # Collect existing group info for defaults
-    existing_names = list(st.session_state.groups.keys())
-    existing_wells = list(st.session_state.groups.values())
-
-    groups: dict[str, list[str]] = {}
-    assigned_wells: set[str] = set()
-
-    for i in range(num_groups):
-        col_name, col_wells = st.columns([1, 3])
-        default_name = existing_names[i] if i < len(existing_names) else f"Group {i+1}"
-        default_wells = existing_wells[i] if i < len(existing_wells) else []
-
-        with col_name:
-            name = st.text_input(
-                f"Group {i+1} name",
-                value=default_name,
-                key=f"group_name_{i}",
-                label_visibility="collapsed",
-                placeholder=f"Group {i+1} name",
-            )
-        with col_wells:
-            available = [w for w in all_wells if w not in assigned_wells or w in default_wells]
-            selected = st.multiselect(
-                f"Wells for {name}",
-                options=available,
-                default=[w for w in default_wells if w in available],
-                key=f"group_wells_{i}",
-                label_visibility="collapsed",
-                placeholder="Select wells...",
-            )
-
-        if name and selected:
-            groups[name] = selected
-            assigned_wells.update(selected)
-
-    # Update session state
+    # Extract groups from edited grid
+    groups = _grid_to_groups(edited_grid)
     st.session_state.groups = groups
 
-    # Unassigned wells warning
-    unassigned = set(all_wells) - assigned_wells
-    if unassigned:
-        st.warning(f"Unassigned wells: {', '.join(sorted(unassigned))}")
+    # Show color-coded preview
+    if groups:
+        st.subheader("Group Preview")
+        st.dataframe(
+            _colorize_plate_grid(edited_grid),
+            use_container_width=True,
+            height=330,
+        )
+
+        # Group summary
+        col_summary, col_controls = st.columns([2, 1])
+        with col_summary:
+            for gname, wells in groups.items():
+                st.caption(f"**{gname}**: {', '.join(wells)}")
+
+        with col_controls:
+            config_json = json.dumps(groups, indent=2)
+            st.download_button(
+                "Save group config",
+                data=config_json,
+                file_name="melanin_group_config.json",
+                mime="application/json",
+            )
 
     st.divider()
-    col_ref, col_comp = st.columns(2)
+
+    # Reference and comparison group selectors
     group_names = list(groups.keys())
-
-    with col_ref:
-        norm_ref = st.selectbox(
-            "Normalization reference (= 100%)",
-            options=group_names,
-            index=0 if group_names else None,
-            help="All values will be expressed as % of this group's mean concentration.",
-        )
-    with col_comp:
-        comp_group = st.selectbox(
-            "T-test comparison group",
-            options=group_names,
-            index=min(1, len(group_names) - 1) if group_names else None,
-            help="Statistical significance is calculated vs this group.",
-        )
-
-    # Store selections
-    st.session_state["norm_ref"] = norm_ref
-    st.session_state["comp_group"] = comp_group
-
-    # Save config button
-    st.divider()
-    if groups:
-        config_json = json.dumps(groups, indent=2)
-        st.download_button(
-            "💾 Save group config",
-            data=config_json,
-            file_name="melanin_group_config.json",
-            mime="application/json",
-        )
-
-    # Quick summary
-    if groups:
-        st.subheader("Group Summary")
-        for gname, wells in groups.items():
-            tag = ""
-            if gname == norm_ref:
-                tag = " ← normalization reference"
-            elif gname == comp_group:
-                tag = " ← t-test comparison"
-            st.caption(f"**{gname}**: {', '.join(wells)}{tag}")
+    if len(group_names) >= 2:
+        col_ref, col_comp = st.columns(2)
+        with col_ref:
+            norm_ref = st.selectbox(
+                "Normalization reference (= 100%)",
+                options=group_names,
+                index=0,
+                help="All values will be expressed as % of this group's mean.",
+            )
+        with col_comp:
+            comp_group = st.selectbox(
+                "T-test comparison group",
+                options=group_names,
+                index=min(1, len(group_names) - 1),
+                help="Statistical significance calculated vs this group.",
+            )
+        st.session_state["norm_ref"] = norm_ref
+        st.session_state["comp_group"] = comp_group
+    else:
+        st.info("Assign at least 2 groups to configure analysis.")
 
 
 # ── Tab 3: Results ───────────────────────────────────────────────────────────
@@ -319,7 +372,6 @@ with tab_results:
                 vals = concentrations.get(gname, [])
                 row[gname] = vals[i] if i < len(vals) else None
             conc_rows.append(row)
-        # Add mean row
         mean_row = {"Measurement": "Mean"}
         for gname in group_names:
             vals = concentrations.get(gname, [])
@@ -372,10 +424,8 @@ with tab_results:
     st.divider()
     st.subheader("Export")
 
-    # Build export Excel
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        # Absorbance sheet
         abs_df_export = pd.DataFrame(
             [{gname: np.mean([parsed_data[fname].get(w) for w in groups[gname] if w in parsed_data[fname]] or [0])
               for gname in group_names}
@@ -384,14 +434,9 @@ with tab_results:
         )
         abs_df_export.index.name = "Measurement"
         abs_df_export.to_excel(writer, sheet_name="Absorbance")
-
-        # Concentration sheet
         conc_df.to_excel(writer, sheet_name="Concentration")
-
-        # Normalized sheet
         norm_df.to_excel(writer, sheet_name="Normalized")
 
-        # Stats sheet
         stats_export = stats_df.copy()
         for gname in group_names:
             res = ttest_results.get(gname, {})
@@ -400,7 +445,7 @@ with tab_results:
         stats_export.to_excel(writer, sheet_name="Statistics", index=False)
 
     st.download_button(
-        "📥 Download Results (Excel)",
+        "Download Results (Excel)",
         data=buffer.getvalue(),
         file_name="melanin_analysis_results.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
