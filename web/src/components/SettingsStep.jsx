@@ -709,54 +709,112 @@ export default function SettingsStep({
         {conditions.length > 0 && (
           <>
             <p style={styles.subsectionTitle}>Bar Colors</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {conditions.map((cond, i) => {
                 const currentColor = (chartOptions.barColors && chartOptions.barColors[cond.name]) || BAR_COLORS[i % BAR_COLORS.length];
+                const presetColors = [
+                  '#B0BEC5', '#78909C', '#42A5F5', '#29B6F6', '#26C6DA',
+                  '#66BB6A', '#FFA726', '#EF5350', '#AB47BC', '#8D6E63',
+                  '#EC407A', '#5C6BC0', '#26A69A', '#D4E157', '#FF7043',
+                  '#8E24AA', '#00ACC1', '#43A047', '#FFB300', '#E53935',
+                ];
                 return (
-                  <div key={cond.id || i} style={{ ...styles.optionRow, borderBottom: i < conditions.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
-                    <span style={styles.optionLabel}>{cond.name}</span>
-                    <div style={styles.optionControl}>
-                      <input
-                        type="color"
-                        value={currentColor}
-                        onChange={(e) => {
-                          const newColors = { ...(chartOptions.barColors || {}) };
-                          newColors[cond.name] = e.target.value;
-                          updateChartOption('barColors', newColors);
-                        }}
-                        style={{
-                          width: 32,
-                          height: 32,
-                          padding: 0,
-                          border: '2px solid #e2e8f0',
-                          borderRadius: 6,
-                          cursor: 'pointer',
-                          backgroundColor: 'transparent',
-                        }}
-                      />
-                      <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontFamily: 'monospace' }}>
-                        {currentColor}
-                      </span>
-                      {chartOptions.barColors && chartOptions.barColors[cond.name] && (
+                  <div key={cond.id || i} style={{ padding: '8px 0', borderBottom: i < conditions.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <span style={styles.optionLabel}>{cond.name}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div
+                          style={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: 6,
+                            backgroundColor: currentColor,
+                            border: '2px solid #e2e8f0',
+                            flexShrink: 0,
+                          }}
+                        />
+                        {chartOptions.barColors && chartOptions.barColors[cond.name] && (
+                          <button
+                            onClick={() => {
+                              const newColors = { ...(chartOptions.barColors || {}) };
+                              delete newColors[cond.name];
+                              updateChartOption('barColors', newColors);
+                            }}
+                            style={{
+                              fontSize: '0.6875rem',
+                              color: '#94a3b8',
+                              background: 'none',
+                              border: '1px solid #e2e8f0',
+                              borderRadius: 4,
+                              padding: '2px 8px',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Reset
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {presetColors.map((color) => (
                         <button
+                          key={color}
                           onClick={() => {
                             const newColors = { ...(chartOptions.barColors || {}) };
-                            delete newColors[cond.name];
+                            newColors[cond.name] = color;
                             updateChartOption('barColors', newColors);
                           }}
                           style={{
-                            fontSize: '0.6875rem',
-                            color: '#94a3b8',
-                            background: 'none',
-                            border: '1px solid #e2e8f0',
+                            width: 24,
+                            height: 24,
                             borderRadius: 4,
-                            padding: '2px 8px',
+                            backgroundColor: color,
+                            border: currentColor === color ? '2px solid #1e293b' : '2px solid transparent',
+                            cursor: 'pointer',
+                            padding: 0,
+                            transition: 'border-color 0.1s, transform 0.1s',
+                            transform: currentColor === color ? 'scale(1.15)' : 'scale(1)',
+                          }}
+                          title={color}
+                        />
+                      ))}
+                      <label
+                        style={{
+                          width: 24,
+                          height: 24,
+                          borderRadius: 4,
+                          border: '2px dashed #cbd5e1',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: 12,
+                          color: '#94a3b8',
+                          position: 'relative',
+                          overflow: 'hidden',
+                        }}
+                        title="Custom color"
+                      >
+                        +
+                        <input
+                          type="color"
+                          value={currentColor}
+                          onChange={(e) => {
+                            const newColors = { ...(chartOptions.barColors || {}) };
+                            newColors[cond.name] = e.target.value;
+                            updateChartOption('barColors', newColors);
+                          }}
+                          style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            width: '100%',
+                            height: '100%',
+                            opacity: 0,
                             cursor: 'pointer',
                           }}
-                        >
-                          Reset
-                        </button>
-                      )}
+                        />
+                      </label>
                     </div>
                   </div>
                 );
