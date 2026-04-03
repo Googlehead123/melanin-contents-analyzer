@@ -260,7 +260,10 @@ export default function App() {
     yAxisMin: null,
     yAxisMax: null,
     yAxisLabel: 'Melanin Content (% of Reference)',
+    xAxisLabel: 'Treatment Group',
+    chartTitle: '',
     barOutline: true,
+    barColors: {},  // { groupName: '#hex' } — overrides BAR_COLORS defaults
   });
 
   // Active plate derived state

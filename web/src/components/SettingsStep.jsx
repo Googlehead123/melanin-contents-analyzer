@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useMemo } from 'react';
-import { CHART_THEMES } from '../utils/constants';
+import { CHART_THEMES, BAR_COLORS } from '../utils/constants';
 import { loadConfigJSON } from '../utils/export';
 
 const styles = {
@@ -608,6 +608,31 @@ export default function SettingsStep({
       <div style={styles.section}>
         <h2 style={styles.sectionTitle}>Chart Customization</h2>
 
+        <p style={styles.subsectionTitle}>Titles &amp; Labels</p>
+        <div style={styles.optionRow}>
+          <span style={styles.optionLabel}>Chart Title</span>
+          <div style={styles.optionControl}>
+            <input
+              type="text"
+              value={chartOptions.chartTitle || ''}
+              placeholder="(none)"
+              onChange={(e) => updateChartOption('chartTitle', e.target.value)}
+              style={styles.textInputWide}
+            />
+          </div>
+        </div>
+        <div style={styles.optionRow}>
+          <span style={styles.optionLabel}>X-Axis Label</span>
+          <div style={styles.optionControl}>
+            <input
+              type="text"
+              value={chartOptions.xAxisLabel || 'Treatment Group'}
+              onChange={(e) => updateChartOption('xAxisLabel', e.target.value)}
+              style={styles.textInputWide}
+            />
+          </div>
+        </div>
+
         <p style={styles.subsectionTitle}>Font Sizes</p>
         <div style={styles.optionRow}>
           <span style={styles.optionLabel}>Title Font Size</span>
@@ -680,6 +705,65 @@ export default function SettingsStep({
             />
           </div>
         </div>
+
+        {conditions.length > 0 && (
+          <>
+            <p style={styles.subsectionTitle}>Bar Colors</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {conditions.map((cond, i) => {
+                const currentColor = (chartOptions.barColors && chartOptions.barColors[cond.name]) || BAR_COLORS[i % BAR_COLORS.length];
+                return (
+                  <div key={cond.id || i} style={{ ...styles.optionRow, borderBottom: i < conditions.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
+                    <span style={styles.optionLabel}>{cond.name}</span>
+                    <div style={styles.optionControl}>
+                      <input
+                        type="color"
+                        value={currentColor}
+                        onChange={(e) => {
+                          const newColors = { ...(chartOptions.barColors || {}) };
+                          newColors[cond.name] = e.target.value;
+                          updateChartOption('barColors', newColors);
+                        }}
+                        style={{
+                          width: 32,
+                          height: 32,
+                          padding: 0,
+                          border: '2px solid #e2e8f0',
+                          borderRadius: 6,
+                          cursor: 'pointer',
+                          backgroundColor: 'transparent',
+                        }}
+                      />
+                      <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontFamily: 'monospace' }}>
+                        {currentColor}
+                      </span>
+                      {chartOptions.barColors && chartOptions.barColors[cond.name] && (
+                        <button
+                          onClick={() => {
+                            const newColors = { ...(chartOptions.barColors || {}) };
+                            delete newColors[cond.name];
+                            updateChartOption('barColors', newColors);
+                          }}
+                          style={{
+                            fontSize: '0.6875rem',
+                            color: '#94a3b8',
+                            background: 'none',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: 4,
+                            padding: '2px 8px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Reset
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
 
         <p style={styles.subsectionTitle}>Error Bars</p>
         <div style={styles.optionRow}>

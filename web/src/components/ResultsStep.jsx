@@ -347,7 +347,7 @@ export default function ResultsStep({
         color: theme.text,
       },
       marker: {
-        color: stats.map((_, i) => BAR_COLORS[i % BAR_COLORS.length]),
+        color: stats.map((s, i) => (opts.barColors && opts.barColors[s.group]) || BAR_COLORS[i % BAR_COLORS.length]),
         line: { width: opts.barOutline !== false ? 1 : 0, color: '#37474F' },
       },
       text: opts.showValues !== false ? stats.map((s) => s.mean.toFixed(2)) : stats.map(() => ''),
@@ -386,12 +386,13 @@ export default function ResultsStep({
   const chartLayout = {
     template: 'none',
     height: 500,
-    margin: { t: 40, r: 30, b: 60, l: 60 },
+    margin: { t: opts.chartTitle ? 60 : 40, r: 30, b: 60, l: 60 },
     paper_bgcolor: theme.paper,
     plot_bgcolor: theme.background,
+    ...(opts.chartTitle ? { title: { text: opts.chartTitle, font: { size: opts.titleFontSize || 16, color: theme.text } } } : {}),
     font: { color: theme.text, size: opts.fontSize || 12, family: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' },
     xaxis: {
-      title: { text: 'Treatment Group', font: { size: opts.fontSize || 12 } },
+      title: { text: opts.xAxisLabel || 'Treatment Group', font: { size: opts.fontSize || 12 } },
       tickfont: { size: 11 },
       gridcolor: theme.grid,
       linecolor: theme.grid,
